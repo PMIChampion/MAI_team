@@ -1,4 +1,4 @@
-# Ultralytics YOLO 🚀, AGPL-3.0 license
+alytics YOLO 🚀, AGPL-3.0 license
 
 import os
 from pathlib import Path
@@ -37,6 +37,8 @@ class DetectionValidator(BaseValidator):
         self.is_lvis = False
         self.class_map = None
         self.args.task = "detect"
+        self.quality_scores = []  # Добавляем список для хранения quality scores
+        self.thresholds = torch.linspace(0.5, 0.95, 10)  # Пример порогов IoU, если еще не определено
         self.metrics = DetMetrics(save_dir=self.save_dir, on_plot=self.on_plot)
         self.iouv = torch.linspace(0.5, 0.95, 10)  # IoU vector for mAP@0.5:0.95
         self.niou = self.iouv.numel()
@@ -87,7 +89,7 @@ class DetectionValidator(BaseValidator):
 
     def get_desc(self):
         """Return a formatted string summarizing class metrics of YOLO model."""
-        return ("%22s" + "%11s" * 6) % ("Class", "Images", "Instances", "Box(P", "R", "mAP50", "mAP50-95)")
+        return ("%22s" + "%11s" * 6) % ("Class", "Images", "Instances", "Box(P", "R", "mAP50", "mAP50-95), Special Metric")
 
     def postprocess(self, preds):
         """Apply Non-maximum suppression to prediction outputs."""
@@ -122,8 +124,87 @@ class DetectionValidator(BaseValidator):
         )  # native-space pred
         return predn
 
+    def calc_f_beta(self, tp, fn, fp, beta=1.0):
+        """
+        Вычисляет F-бета балл.
+
+        :param tp: Истинные положительные
+        :param fn: Ложные отрицательные
+        :param fp: Ложные положительные
+        :param beta: Вес полноты относительно точности
+        :return: F-бета балл
+        """
+        beta_sq = beta ** 2
+        precision = tp / (tp + fp + 1e-8)
+        recall = tp / (tp + fn + 1e-8)
+        f_beta = (1 + beta_sq) * (precision * recall) / (beta_sq * precision + recall + 1e-8)
+        return f_beta
+
+    def count_of_preds(self, pred_boxes, true_boxes, iou_threshold) -> tuple:
+        """
+        Подсчитывает количество истинных положительных (TP), ложных положительных (FP) и ложных отрицательных (FN) предсказаний.
+
+        :param pred_boxes: Предсказанные боксы (Tensor) в формате [x1, y1, x2, y2]
+        :param true_boxes: Истинные боксы (Tensor) в формате [x1, y1, x2, y2]
+        :param iou_threshold: Порог IoU для определения совпадения
+        :return: tp, fp, fn
+        """
+        if len(pred_boxes) == 0 and len(true_boxes) == 0:
+            return 0, 0, 0
+        if len(pred_boxes) == 0:
+            return 0, 0, len(true_boxes)
+        if len(true_boxes) == 0:
+            return 0, len(pred_boxes), 0
+
+        # Вычисляем матрицу IoU между предсказанными и истинными боксами
+        iou = box_iou(pred_boxes, true_boxes)  # Shape: [num_preds, num_true]
+
+        # Для каждого предсказания находим максимальный IoU и соответствующий индекс истинного бокса
+        max_iou, max_iou_indices = iou.max(dim=1)  # max_iou: [num_preds], max_iou_indices: [num_preds]
+
+        # Определяем TP и FP
+        tp = (max_iou >= iou_threshold).sum().item()
+        fp = (max_iou < iou_threshold).sum().item()
+
+        # Для FN проверяем, какие истинные боксы не были покрыты ни одним предсказанием
+        if iou.numel() == 0:
+            fn = len(true_boxes)
+        else:
+            # Для каждого истинного бокса находим максимальный IoU
+            max_iou_true, _ = iou.max(dim=0)  # max_iou_true: [num_true]
+            fn = (max_iou_true < iou_threshold).sum().item()
+
+        return tp, fp, fn
+
+    def cal_Quality(self, pred_boxes_list, true_boxes_list) -> float:
+        f_beta_list = []
+
+        for iou_threshold in self.thresholds:
+            total_tp, total_fp, total_fn = 0, 0, 0
+
+            for pred_boxes, true_boxes in zip(pred_boxes_list, true_boxes_list):
+
+                if len(pred_boxes) == 0 and len(true_boxes) == 0:
+                    continue
+
+                tp, fp, fn = self.count_of_preds(pred_boxes, true_boxes, iou_threshold)
+                total_tp += tp
+                total_fp += fp
+                total_fn += fn
+
+            if total_tp + total_fp + total_fn == 0:
+                f_beta = 0
+            else:
+                f_beta = self.calc_f_beta(total_tp, total_fn, total_fp)
+
+            f_beta_list.append(f_beta)
+
+        return np.mean(f_beta_list) if f_beta_list else 0
+
     def update_metrics(self, preds, batch):
         """Metrics."""
+        pred_boxes_list = []
+        true_boxes_list = []
         for si, pred in enumerate(preds):
             self.seen += 1
             npr = len(pred)
@@ -152,6 +233,10 @@ class DetectionValidator(BaseValidator):
             stat["conf"] = predn[:, 4]
             stat["pred_cls"] = predn[:, 5]
 
+            pred_boxes = predn[:, :4].cpu()
+            true_boxes = bbox.cpu()
+            pred_boxes_list.append(pred_boxes)
+            true_boxes_list.append(true_boxes)
             # Evaluate
             if nl:
                 stat["tp"] = self._process_batch(predn, bbox, cls)
@@ -170,11 +255,18 @@ class DetectionValidator(BaseValidator):
                     pbatch["ori_shape"],
                     self.save_dir / "labels" / f'{Path(batch["im_file"][si]).stem}.txt',
                 )
+        quality_score = self.cal_Quality(pred_boxes_list, true_boxes_list)
+        self.quality_scores.append(quality_score)
+        if self.writer is not None:
+            self.writer.add_scalar('Quality/val', quality_score, self.seen)
+
 
     def finalize_metrics(self, *args, **kwargs):
         """Set final values for metrics speed and confusion matrix."""
         self.metrics.speed = self.speed
         self.metrics.confusion_matrix = self.confusion_matrix
+        if self.writer is not None:
+            self.writer.close()
 
     def get_stats(self):
         """Returns metrics statistics and results dictionary."""
@@ -184,7 +276,9 @@ class DetectionValidator(BaseValidator):
         stats.pop("target_img", None)
         if len(stats) and stats["tp"].any():
             self.metrics.process(**stats)
-        return self.metrics.results_dict
+        stats = self.metrics.results_dict
+        stats['quality_score'] = np.mean(self.quality_scores)  # Добавляем Quality score
+        return stats
 
     def print_results(self):
         """Prints training/validation set metrics per class."""
