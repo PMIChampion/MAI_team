@@ -257,16 +257,16 @@ class DetectionValidator(BaseValidator):
                 )
         quality_score = self.cal_Quality(pred_boxes_list, true_boxes_list)
         self.quality_scores.append(quality_score)
-        if self.writer is not None:
-            self.writer.add_scalar('Quality/val', quality_score, self.seen)
+        # if self.writer is not None:
+        #     self.writer.add_scalar('Quality/val', quality_score, self.seen)
 
 
     def finalize_metrics(self, *args, **kwargs):
         """Set final values for metrics speed and confusion matrix."""
         self.metrics.speed = self.speed
         self.metrics.confusion_matrix = self.confusion_matrix
-        if self.writer is not None:
-            self.writer.close()
+        # if self.writer is not None:
+        #     self.writer.close()
 
     def get_stats(self):
         """Returns metrics statistics and results dictionary."""
