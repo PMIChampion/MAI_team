@@ -1,4 +1,4 @@
-alytics YOLO 🚀, AGPL-3.0 license
+
 
 import os
 from pathlib import Path
