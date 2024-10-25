@@ -276,9 +276,8 @@ class DetectionValidator(BaseValidator):
         stats.pop("target_img", None)
         if len(stats) and stats["tp"].any():
             self.metrics.process(**stats)
-        stats = self.metrics.results_dict
-        stats['quality_score'] = np.mean(self.quality_scores)  # Добавляем Quality score
-        return stats
+        self.metrics.results_dict['quality_score'] = np.mean(self.quality_score)
+        return self.metrics.results_dict
 
     def print_results(self):
         """Prints training/validation set metrics per class."""
