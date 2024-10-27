@@ -56,6 +56,7 @@ from .block import (
     RepVGGDW,
     ResNetLayer,
     SCDown,
+    DiffSE
 )
 from .conv import (
     CBAM,

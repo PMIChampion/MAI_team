@@ -4,6 +4,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
@@ -49,8 +50,48 @@ __all__ = (
     "Attention",
     "PSA",
     "SCDown",
+    "DiffSE"
 )
 
+class SEBlock(nn.Module):
+    def __init__(self, C, divide=16):  
+        super().__init__()
+        self.dense = nn.Sequential(
+            nn.Linear(C, C // divide),  
+            nn.ReLU(inplace=True),
+            nn.Linear(C // divide, C),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        batch, channels, height, width = x.size()
+        out = F.avg_pool2d(x, kernel_size=[height, width]).view(batch, -1)  
+        out = self.dense(out)
+        out = out.view(batch, channels, 1, 1)
+        return out
+
+
+class DiffSE(nn.Module):
+    def __init__(self, channels, l_init=0.8):
+        super().__init__()
+        self.se_block_A = SEBlock(channels)
+        self.se_block_B = SEBlock(channels)
+
+        self.lq1 = nn.Parameter(torch.randn(channels))
+        self.lk1 = nn.Parameter(torch.randn(channels))
+        self.lq2 = nn.Parameter(torch.randn(channels))
+        self.lk2 = nn.Parameter(torch.randn(channels))
+
+        self.l_init = l_init - 0.6 * math.exp(-0.3 * (0.001 - 1))
+
+    def forward(self, x):
+        A = self.se_block_A(x)  
+        B = self.se_block_B(x)  
+        lambda_value = torch.exp(torch.dot(self.lq1, self.lk1)) - torch.exp(torch.dot(self.lq2, self.lk2)) + self.l_init
+        diff_atten = (A - lambda_value * B) * x
+        
+        return diff_atten
+    
 
 class DFL(nn.Module):
     """
