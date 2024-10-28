@@ -1,8 +1,5 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
-import albumentations as A
-from albumentations.pytorch.transforms import ToTensorV2
-
 import math
 import random
 from copy import deepcopy
@@ -1795,6 +1792,7 @@ class Albumentations:
 
         try:
             import albumentations as A
+            from albumentations.pytorch.transforms import ToTensorV2
 
             check_version(A.__version__, "1.0.3", hard=True)  # version requirement
 
