@@ -1,5 +1,8 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
+import albumentations as A
+from albumentations.pytorch.transforms import ToTensorV2
+
 import math
 import random
 from copy import deepcopy
@@ -1841,13 +1844,15 @@ class Albumentations:
 
             # Transforms
             T = [
-                A.Blur(p=0.01),
-                A.MedianBlur(p=0.01),
-                A.ToGray(p=0.01),
-                A.CLAHE(p=0.01),
-                A.RandomBrightnessContrast(p=0.0),
-                A.RandomGamma(p=0.0),
-                A.ImageCompression(quality_lower=75, p=0.0),
+                A.RandomBrightnessContrast(p=0.5),
+                A.HueSaturationValue(p=0.5),
+                A.RGBShift(p=0.5),
+                A.RandomGamma(p=0.5),
+                A.Blur(blur_limit=3, p=0.5),
+                A.GaussNoise(p=0.5),
+                A.MotionBlur(p=0.5),
+                A.CLAHE(p=0.5),
+                A.ToGray(p=0.5),
             ]
 
             # Compose transforms
