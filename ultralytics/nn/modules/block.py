@@ -53,45 +53,80 @@ __all__ = (
     "DiffSE"
 )
 
-class SEBlock(nn.Module):
-    def __init__(self, C, divide=16):  
+# идея: вот этот sr блок чисто прокачанная версия конволюции, так что его можно как-бы совместить с diffse блоком
+# идея 1+0.5: после этапа squieeze sp блоца применить se блок
+class SE_Block(nn.Module):
+    def __init__(self, ch_in, reduction=16):
         super().__init__()
-        self.dense = nn.Sequential(
-            nn.Linear(C, C // divide),  
+        self.avg_pool = nn.AdaptiveAvgPool2d(1) # global adaptive pooling
+        self.fc = nn.Sequential(
+            nn.Linear(ch_in, ch_in // reduction, bias=False),
             nn.ReLU(inplace=True),
-            nn.Linear(C // divide, C),
+            nn.Linear(ch_in // reduction, ch_in, bias=False),
             nn.Sigmoid()
         )
-
+ 
     def forward(self, x):
-        batch, channels, height, width = x.size()
-        out = F.avg_pool2d(x, kernel_size=[height, width]).view(batch, -1)  
-        out = self.dense(out)
-        out = out.view(batch, channels, 1, 1)
-        return out
+        b, c, _, _ = x.size()
+        y = self.avg_pool(x).view(b, c)
+        y = self.fc(y).view(b, c, 1, 1)
+        return x * y.expand_as(x)
 
 
 class DiffSE(nn.Module):
-    def __init__(self, channels, l_init=0.8):
+    def __init__(self, dim, l_init=0.8):
         super().__init__()
-        self.se_block_A = SEBlock(channels)
-        self.se_block_B = SEBlock(channels)
+        self.se_block_A = SE_Block(dim)
 
-        self.lq1 = nn.Parameter(torch.randn(channels))
-        self.lk1 = nn.Parameter(torch.randn(channels))
-        self.lq2 = nn.Parameter(torch.randn(channels))
-        self.lk2 = nn.Parameter(torch.randn(channels))
+        self.lq1 = nn.Parameter(torch.randn(dim))
+        self.lk1 = nn.Parameter(torch.randn(dim))
+        self.lq2 = nn.Parameter(torch.randn(dim))
+        self.lk2 = nn.Parameter(torch.randn(dim))
 
         self.l_init = l_init - 0.6 * math.exp(-0.3 * (0.001 - 1))
 
     def forward(self, x):
-        A = self.se_block_A(x)  
-        B = self.se_block_B(x)  
-        lambda_value = torch.exp(torch.dot(self.lq1, self.lk1)) - torch.exp(torch.dot(self.lq2, self.lk2)) + self.l_init
-        diff_atten = (A - lambda_value * B) * x
         
-        return diff_atten
-    
+        A = self.se_block_A(x)  
+        lambda_value = torch.exp(torch.dot(self.lq1, self.lk1)) - torch.exp(torch.dot(self.lq2, self.lk2)) + self.l_init
+        x = lambda_value * A
+        return x
+
+
+class SqueezeAndRememberBlock(nn.Module):
+    def __init__(self, in_channels, memory_blocks, memory_size):
+        super(SqueezeAndRememberBlock, self).__init__()
+        
+        # 1x1 Convolution for Squeeze stage
+        self.squeeze_conv = nn.Conv2d(in_channels, 1, kernel_size=1)
+        
+        # Fully Connected Network for Remember stage
+        flattened_size = memory_size[1] * memory_size[2]  # H * W
+        self.fcn = nn.Sequential(
+            nn.Linear(flattened_size, memory_blocks),
+            nn.ReLU(),
+            nn.Linear(memory_blocks, memory_blocks),
+            nn.Softmax(dim=0)
+        )
+        
+        # Memory blocks (initialized as zeros, learnable parameters)
+        self.memory_blocks = nn.ParameterList(
+            [nn.Parameter(torch.zeros(in_channels, *memory_size)) for _ in range(memory_blocks)]
+        )
+
+    def forward(self, x):
+        # Squeeze stage
+        x_squeezed = self.squeeze_conv(x)  # Shape: (B, 1, H, W)
+        x_squeezed_flattened = x_squeezed.view(x.size(0), -1)  # Flatten for FCN input
+
+        # Remember stage
+        weights = self.fcn(x_squeezed_flattened)  # Compute weights for each memory block
+        weighted_memory_sum = sum(w * m for w, m in zip(weights, self.memory_blocks))  # Weighted sum of memory
+
+        # Add stage
+        out = x + weighted_memory_sum  # Add back to input
+        return out
+        
 
 class DFL(nn.Module):
     """
@@ -958,6 +993,7 @@ class Attention(nn.Module):
         x = (v @ attn.transpose(-2, -1)).view(B, C, H, W) + self.pe(v.reshape(B, C, H, W))
         x = self.proj(x)
         return x
+            
 
 
 class PSABlock(nn.Module):

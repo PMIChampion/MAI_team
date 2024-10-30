@@ -1,0 +1,5 @@
+names:
+- person
+nc: 1
+train: /home/jovyah/datasets/dataset_yolo_X
+val: /home/jovyah/datasets/dataset_yolo_X_val
