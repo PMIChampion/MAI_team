@@ -1,5 +1,5 @@
 names:
 - person
 nc: 1
-train: /home/jovyah/datasets/dataset_yolo_X
-val: /home/jovyah/datasets/dataset_yolo_X_val
+train: /home/jovyan/datasets/data_YOLO1/video_with_ann
+val: /home/jovyan/datasets/dataset_split/val

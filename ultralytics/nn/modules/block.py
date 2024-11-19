@@ -71,26 +71,28 @@ class SE_Block(nn.Module):
         y = self.avg_pool(x).view(b, c)
         y = self.fc(y).view(b, c, 1, 1)
         return x * y.expand_as(x)
-
+#diffse = (softmax(q1k1/v1) - lambda * softmax(q2k2/v2))v
 
 class DiffSE(nn.Module):
     def __init__(self, dim, l_init=0.8):
         super().__init__()
         self.se_block_A = SE_Block(dim)
+        # self.se_block_B = SE_Block(dim)
 
-        self.lq1 = nn.Parameter(torch.randn(dim))
-        self.lk1 = nn.Parameter(torch.randn(dim))
-        self.lq2 = nn.Parameter(torch.randn(dim))
-        self.lk2 = nn.Parameter(torch.randn(dim))
+        # self.lq1 = nn.Parameter(torch.randn(dim))
+        # self.lk1 = nn.Parameter(torch.randn(dim))
+        # self.lq2 = nn.Parameter(torch.randn(dim))
+        # self.lk2 = nn.Parameter(torch.randn(dim))
 
-        self.l_init = l_init - 0.6 * math.exp(-0.3 * (0.001 - 1))
+        # self.l_init = l_init - 0.6 * math.exp(-0.3 * (0.001 - 1))
 
     def forward(self, x):
         
-        A = self.se_block_A(x)  
-        lambda_value = torch.exp(torch.dot(self.lq1, self.lk1)) - torch.exp(torch.dot(self.lq2, self.lk2)) + self.l_init
-        x = lambda_value * A
-        return x
+        A = self.se_block_A(x)
+        # B = self.se_block_B(x)
+        # lambda_value = torch.exp(torch.dot(self.lq1, self.lk1)) - torch.exp(torch.dot(self.lq2, self.lk2)) + self.l_init
+        # x = A - lambda_value * B
+        return A
 
 
 class SqueezeAndRememberBlock(nn.Module):
